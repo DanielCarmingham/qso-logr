@@ -15,6 +15,7 @@
 (def bad-request (partial response 400))
 
 (def echo
+  ; interceptor for troubleshooting
   {:name :echo
    :enter
    (fn [context]
@@ -23,41 +24,50 @@
        (assoc context :response response)))})
 
 (def json-request-body
+  ; interceptor to parse JSON from the body and put it in :request :json-params
   {:name :json-body
    :enter
    (fn [context]
      (let [request (:request context)]
-       (assoc context :body-json (body-params/json-parser request))))})
+       (assoc-in context [:request] (body-params/json-parser request))))})
 
 (def json-response
-  ; interceptor to take :result and turn it onto a JSON-serialized OK response
+  ; interceptor to take :result from context and turn it onto a JSON-serialized OK response
   {:name :json-response
    :leave
    (fn [context]
-     (if-let [result (:result context)]
-       (assoc context :response (ok (json/write-str result)))))
+     (if-let [result (::result context)]
+       (assoc context :response (ok (json/write-str result)))
+       context))
    })
 
 (def get-qso-list
   {:name :get-qso-list
    :leave
    (fn [context]
-     (assoc context :result (qsos/all)))})
+     (assoc context ::result (qsos/all)))})
 
 (def add-qso
   {:name :add-qso
    :enter
    (fn [context]
-     (if-let [new-qso (get-in context [:request :son-params])]
-       (assoc context :result (qsos/add-qso new-qso))
-       (assoc context :response (bad-request "Missing json entity in body"))))})
+     (if-let [json-params (get-in context [:request :json-params])]
+       (assoc context ::result (qsos/add-qso json-params))
+       (assoc context :response (bad-request "Missing json entity in body")))
+     )})
+
+(def get-qso
+  {:name :get-qso
+   :enter
+   (fn [context]
+     (let [qso-id (get-in context [:request :path-params :qso-id])]
+       (assoc context ::result (qsos/get-qso qso-id))))})
 
 (def routes
   (route/expand-routes
-    #{["/qso"                    :post   [(body-params/body-params) add-qso]]
-      ["/qso/new"                :post   [json-request-body json-response add-qso]]
+    #{["/qso"                    :post   [json-request-body json-response add-qso]]
       ["/qso"                    :get    [json-response get-qso-list]]
-      ["/qso/:qso-id"            :get    echo :route-name :qso-get]
+      ["/qso/:qso-id"            :get    [json-response get-qso]]
       ["/qso/:qso-id"            :put    echo :route-name :qso-update]}))
 
 (def service-map
